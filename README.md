@@ -9,7 +9,7 @@ sry nothing here yet...
 
 
 ## Roadmap
-- [] Create Auth System
-  - [] Design Auth System
-  - [] Deploy Auth Cloudflare server
+- [ ] Create Auth System
+  - [ ] Design Auth System
+  - [ ] Deploy Auth Cloudflare server
 
