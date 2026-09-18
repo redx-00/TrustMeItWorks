@@ -13,3 +13,6 @@ sry nothing here yet...
   - [ ] Design Auth System
   - [ ] Deploy Auth Cloudflare server
 
+## Languages
+- HTML/CSS
+- JavaScript
