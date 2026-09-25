@@ -9,11 +9,6 @@ sry nothing here yet...
 
 
 ## Roadmap
-- [x] Website
-  - [x] Deploy Website to Github Pages
-- [ ] Create Auth System
-  - [ ] Design Auth System
-  - [ ] Deploy Auth Cloudflare server
 
 ## Languages
 - HTML/CSS
