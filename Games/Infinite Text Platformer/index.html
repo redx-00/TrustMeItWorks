@@ -1,0 +1,973 @@
+```html
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>TEXT//RUN</title>
+
+<style>
+    * {
+        box-sizing: border-box;
+        user-select: none;
+    }
+
+    html, body {
+        margin: 0;
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        background: #000;
+        color: #fff;
+        font-family: "Courier New", monospace;
+    }
+
+    canvas {
+        width: 100vw;
+        height: 100vh;
+        display: block;
+        background: #000;
+    }
+
+    #scanlines {
+        position: fixed;
+        inset: 0;
+        pointer-events: none;
+        background:
+            repeating-linear-gradient(
+                to bottom,
+                transparent 0px,
+                transparent 3px,
+                rgba(255,255,255,.025) 4px
+            );
+        mix-blend-mode: screen;
+    }
+
+    #gameover {
+        position: fixed;
+        inset: 0;
+        display: none;
+        align-items: center;
+        justify-content: center;
+        flex-direction: column;
+        background: rgba(0,0,0,.88);
+        font-family: "Courier New", monospace;
+        text-align: center;
+    }
+
+    #gameover .big {
+        font-size: clamp(35px, 8vw, 90px);
+        white-space: pre;
+        margin-bottom: 20px;
+    }
+
+    #gameover .small {
+        font-size: 18px;
+        line-height: 1.8;
+    }
+</style>
+</head>
+
+<body>
+
+<canvas id="game"></canvas>
+<div id="scanlines"></div>
+
+<div id="gameover">
+    <div class="big">
++------------------+
+|      CAUGHT      |
++------------------+
+    </div>
+
+    <div class="small">
+        <span id="finalDistance"></span><br>
+        <br>
+        [ R ] RUN AGAIN
+    </div>
+</div>
+
+<script>
+
+const canvas = document.getElementById("game");
+const ctx = canvas.getContext("2d");
+
+let W, H;
+
+function resize() {
+    W = canvas.width = innerWidth;
+    H = canvas.height = innerHeight;
+}
+
+addEventListener("resize", resize);
+resize();
+
+
+// ============================================================
+// TEXT RENDERING
+// ============================================================
+
+const FONT_SIZE = 18;
+
+ctx.font = `${FONT_SIZE}px Courier New`;
+
+function text(txt, x, y, alpha = 1) {
+
+    ctx.globalAlpha = alpha;
+    ctx.fillText(txt, x, y);
+    ctx.globalAlpha = 1;
+}
+
+
+// ============================================================
+// GAME STATE
+// ============================================================
+
+let gameOver = false;
+
+let worldX = 0;
+
+let speed = 12;
+
+let distance = 0;
+
+let frame = 0;
+
+
+// ============================================================
+// PLAYER
+// ============================================================
+
+const player = {
+
+    x: 300,
+    y: 300,
+
+    vx: 0,
+    vy: 0,
+
+    width: 1,
+    height: 2,
+
+    grounded: false
+};
+
+
+// ============================================================
+// CHASER
+// ============================================================
+
+const chaser = {
+
+    x: -200,
+    y: 300,
+
+    vx: 0
+};
+
+
+// ============================================================
+// PLATFORMS
+// ============================================================
+
+let platforms = [];
+
+function resetPlatforms() {
+
+    platforms = [];
+
+    let x = -500;
+    let y = 500;
+
+    for (let i = 0; i < 20; i++) {
+
+        let width =
+            10 +
+            Math.floor(Math.random() * 12);
+
+        platforms.push({
+            x: x,
+            y: y,
+            width: width
+        });
+
+        x +=
+            width * FONT_SIZE +
+            40 +
+            Math.random() * 100;
+
+        y +=
+            (Math.random() - .5) *
+            130;
+
+        y = Math.max(
+            220,
+            Math.min(
+                H - 80,
+                y
+            )
+        );
+    }
+}
+
+resetPlatforms();
+
+
+// ============================================================
+// INPUT
+// ============================================================
+
+let jumpPressed = false;
+
+addEventListener("keydown", e => {
+
+    if (
+        e.code === "Space" ||
+        e.code === "ArrowUp" ||
+        e.code === "KeyW"
+    ) {
+
+        jumpPressed = true;
+    }
+
+    if (e.code === "KeyR") {
+
+        restart();
+    }
+});
+
+
+// ============================================================
+// JUMP
+// ============================================================
+
+function jump() {
+
+    if (!player.grounded)
+        return;
+
+    player.vy = -17;
+
+    player.grounded = false;
+}
+
+
+// ============================================================
+// WORLD GENERATION
+// ============================================================
+
+function generatePlatforms() {
+
+    let furthest = Math.max(
+        ...platforms.map(
+            p => p.x + p.width * FONT_SIZE
+        )
+    );
+
+    while (
+        furthest <
+        worldX + W + 1000
+    ) {
+
+        const last =
+            platforms[platforms.length - 1];
+
+        const gap =
+            50 +
+            Math.random() * 130;
+
+        const width =
+            8 +
+            Math.floor(
+                Math.random() * 14
+            );
+
+        let y =
+            last.y +
+            (Math.random() - .5) *
+            180;
+
+        y = Math.max(
+            220,
+            Math.min(
+                H - 80,
+                y
+            )
+        );
+
+        const platform = {
+
+            x:
+                furthest + gap,
+
+            y: y,
+
+            width: width
+        };
+
+        platforms.push(platform);
+
+        furthest =
+            platform.x +
+            platform.width *
+            FONT_SIZE;
+    }
+
+    platforms =
+        platforms.filter(
+            p =>
+                p.x +
+                p.width *
+                FONT_SIZE >
+                worldX - 1000
+        );
+}
+
+
+// ============================================================
+// PLATFORM COLLISION
+// ============================================================
+
+function checkPlatforms() {
+
+    player.grounded = false;
+
+    const playerBottom =
+        player.y + 36;
+
+    for (const p of platforms) {
+
+        const px = p.x;
+        const pw =
+            p.width * FONT_SIZE;
+
+        if (
+
+            player.x + 15 > px &&
+
+            player.x < px + pw &&
+
+            playerBottom >= p.y &&
+
+            playerBottom <=
+                p.y + 25 &&
+
+            player.vy >= 0
+
+        ) {
+
+            player.y =
+                p.y - 36;
+
+            player.vy = 0;
+
+            player.grounded = true;
+
+            return;
+        }
+    }
+}
+
+
+// ============================================================
+// UPDATE
+// ============================================================
+
+function update() {
+
+    if (gameOver)
+        return;
+
+    frame++;
+
+    // Slowly become faster.
+    speed += .002;
+
+    speed =
+        Math.min(
+            speed,
+            30
+        );
+
+
+    // Jump.
+    if (jumpPressed) {
+
+        jump();
+
+        jumpPressed = false;
+    }
+
+
+    // Gravity.
+    player.vy += .8;
+
+    // Constant forward movement.
+    player.vx = speed;
+
+    player.x += player.vx;
+
+    player.y += player.vy;
+
+
+    checkPlatforms();
+
+
+    // Camera.
+    worldX =
+        player.x -
+        W * .27;
+
+
+    generatePlatforms();
+
+
+    // Distance.
+    distance =
+        Math.floor(
+            player.x / 10
+        );
+
+
+    // ========================================================
+    // CHASER
+    // ========================================================
+
+    chaser.x +=
+        speed * .965;
+
+    chaser.y =
+        player.y + 10;
+
+
+    // Caught.
+    if (
+        chaser.x + 70 >
+        player.x
+    ) {
+
+        endGame();
+    }
+
+
+    // Fell.
+    if (
+        player.y >
+        H + 200
+    ) {
+
+        endGame();
+    }
+}
+
+
+// ============================================================
+// BACKGROUND TEXT
+// ============================================================
+
+function drawBackground() {
+
+    ctx.fillStyle = "#000";
+
+    ctx.fillRect(
+        0,
+        0,
+        W,
+        H
+    );
+
+
+    ctx.fillStyle = "#333";
+
+    const columns =
+        Math.ceil(
+            W / FONT_SIZE
+        );
+
+    const rows =
+        Math.ceil(
+            H / FONT_SIZE
+        );
+
+
+    // Random-looking terminal noise.
+    for (
+        let y = 0;
+        y < rows;
+        y++
+    ) {
+
+        for (
+            let x = 0;
+            x < columns;
+            x++
+        ) {
+
+            if (
+                (x * 17 +
+                 y * 31 +
+                 frame) % 173
+                === 0
+            ) {
+
+                const chars =
+                    ".:'`";
+
+                const c =
+                    chars[
+                        Math.floor(
+                            Math.random() *
+                            chars.length
+                        )
+                    ];
+
+                text(
+                    c,
+                    x * FONT_SIZE,
+                    y * FONT_SIZE
+                );
+            }
+        }
+    }
+
+
+    // Horizon.
+    ctx.fillStyle = "#222";
+
+    text(
+        "................................................................................",
+        0,
+        H * .25
+    );
+}
+
+
+// ============================================================
+// DRAW PLATFORMS
+// ============================================================
+
+function drawPlatforms() {
+
+    ctx.fillStyle = "#fff";
+
+    for (const p of platforms) {
+
+        const screenX =
+            p.x - worldX;
+
+        if (
+            screenX +
+            p.width *
+            FONT_SIZE <
+            0
+        )
+            continue;
+
+        if (
+            screenX >
+            W
+        )
+            continue;
+
+
+        // Main platform.
+        let line = "";
+
+        for (
+            let i = 0;
+            i < p.width;
+            i++
+        ) {
+
+            line += "=";
+        }
+
+        text(
+            line,
+            screenX,
+            p.y
+        );
+
+
+        // Underside.
+        ctx.fillStyle = "#555";
+
+        text(
+            "|".repeat(
+                p.width
+            ),
+            screenX,
+            p.y + 20
+        );
+
+        ctx.fillStyle = "#fff";
+    }
+}
+
+
+// ============================================================
+// DRAW PLAYER
+// ============================================================
+
+function drawPlayer() {
+
+    const x =
+        player.x - worldX;
+
+    const y =
+        player.y;
+
+
+    ctx.fillStyle = "#fff";
+
+
+    // Running animation.
+    const run =
+        Math.floor(
+            frame / 5
+        ) % 2;
+
+
+    if (run === 0) {
+
+        text(
+            " O ",
+            x,
+            y
+        );
+
+        text(
+            "/|\\",
+            x,
+            y + 18
+        );
+
+        text(
+            "/ \\",
+            x,
+            y + 36
+        );
+
+    } else {
+
+        text(
+            " O ",
+            x,
+            y
+        );
+
+        text(
+            "\\|/",
+            x,
+            y + 18
+        );
+
+        text(
+            "/\\ ",
+            x,
+            y + 36
+        );
+    }
+
+
+    // Speed trail.
+    ctx.fillStyle = "#777";
+
+    text(
+        "----",
+        x - 55,
+        y + 20,
+        .7
+    );
+
+    text(
+        "-------",
+        x - 120,
+        y + 20,
+        .4
+    );
+}
+
+
+// ============================================================
+// DRAW CHASER
+// ============================================================
+
+function drawChaser() {
+
+    const x =
+        chaser.x - worldX;
+
+    const y =
+        chaser.y;
+
+
+    // If offscreen, don't draw.
+    if (
+        x < -300 ||
+        x > W + 200
+    )
+        return;
+
+
+    ctx.fillStyle = "#fff";
+
+
+    const monster =
+`
+       /\\_/\\\\
+      ( o o )
+      /  ^  \\
+   __/|     |\\__
+  /   |     |   \\
+ /____|_____|____\\
+      /     \\
+     /_/   \\_\\
+`;
+
+
+    const lines =
+        monster.trim().split("\n");
+
+
+    lines.forEach(
+        (line, i) => {
+
+            text(
+                line,
+                x,
+                y +
+                i * FONT_SIZE
+            );
+        }
+    );
+
+
+    // Chase trail.
+    ctx.fillStyle = "#555";
+
+    text(
+        "<<<<<<<<<<",
+        x + 70,
+        y + 45,
+        .7
+    );
+
+    text(
+        "<<<<<<<<<<<<<<",
+        x + 150,
+        y + 45,
+        .4
+    );
+}
+
+
+// ============================================================
+// HUD
+// ============================================================
+
+function drawHUD() {
+
+    ctx.fillStyle = "#fff";
+
+
+    text(
+        "+------------------------------------------------+",
+        20,
+        30
+    );
+
+    text(
+        "| TEXT//RUN                                      |",
+        20,
+        48
+    );
+
+    text(
+        "| DISTANCE: " +
+        String(distance).padStart(6, "0") +
+        "m                         |",
+        20,
+        66
+    );
+
+    text(
+        "| SPEED: " +
+        speed.toFixed(1).padStart(5, " ") +
+        "                                  |",
+        20,
+        84
+    );
+
+    text(
+        "+------------------------------------------------+",
+        20,
+        102
+    );
+
+
+    // Warning.
+    if (
+        frame % 30 < 20
+    ) {
+
+        ctx.fillStyle = "#fff";
+
+        text(
+            "[!!!] SOMETHING IS CHASING YOU [!!!]",
+            W - 430,
+            35
+        );
+    }
+
+
+    // Controls.
+    ctx.fillStyle = "#777";
+
+    text(
+        "[SPACE] JUMP     [R] RESTART",
+        20,
+        H - 25
+    );
+}
+
+
+// ============================================================
+// SPEED EFFECT
+// ============================================================
+
+function drawSpeedText() {
+
+    if (speed < 18)
+        return;
+
+
+    ctx.fillStyle = "#333";
+
+
+    for (
+        let i = 0;
+        i < 15;
+        i++
+    ) {
+
+        const y =
+            Math.random() *
+            H;
+
+        const length =
+            5 +
+            Math.random() * 20;
+
+        text(
+            "-".repeat(
+                Math.floor(length)
+            ),
+            Math.random() * W,
+            y
+        );
+    }
+}
+
+
+// ============================================================
+// DRAW
+// ============================================================
+
+function draw() {
+
+    drawBackground();
+
+    drawSpeedText();
+
+    drawPlatforms();
+
+    drawChaser();
+
+    drawPlayer();
+
+    drawHUD();
+}
+
+
+// ============================================================
+// GAME OVER
+// ============================================================
+
+function endGame() {
+
+    gameOver = true;
+
+    document.getElementById(
+        "finalDistance"
+    ).textContent =
+        "DISTANCE SURVIVED: " +
+        distance +
+        "m";
+
+    document.getElementById(
+        "gameover"
+    ).style.display =
+        "flex";
+}
+
+
+// ============================================================
+// RESTART
+// ============================================================
+
+function restart() {
+
+    gameOver = false;
+
+    worldX = 0;
+
+    speed = 12;
+
+    distance = 0;
+
+    frame = 0;
+
+
+    player.x = 300;
+
+    player.y = 300;
+
+    player.vx = 0;
+
+    player.vy = 0;
+
+
+    chaser.x = -200;
+
+
+    resetPlatforms();
+
+
+    document.getElementById(
+        "gameover"
+    ).style.display =
+        "none";
+}
+
+
+// ============================================================
+// LOOP
+// ============================================================
+
+function loop() {
+
+    update();
+
+    draw();
+
+    requestAnimationFrame(loop);
+}
+
+loop();
+
+</script>
+
+</body>
+</html>
+```
